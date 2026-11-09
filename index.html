@@ -1249,6 +1249,53 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
     var i=curPage(),port=pf.getOrientation()==='portrait',step=port?1:(dir>0?(i===0?1:2):(i<=1?1:2));
     goToPage(clamp(i+dir*step,0,N-1));
   }
+  /* Turning a page by hand. On its own the library only finishes a turn if you let go after the page has
+     crossed the spine, which on a phone is the far edge of the screen. Here a turn finishes once the page
+     has been pulled a fifth of the way, swiped or flicked, and otherwise settles back. The page edge moves with
+     your finger from wherever you touch. The direction is set where the finger went down (on a phone, by
+     which way it moves), not by where the finger has got to when the page starts to lift. */
+  function easyTurn(pf){
+    var fc=pf.getFlipController&&pf.getFlipController();
+    if(!fc||!fc.fold||!fc.stopMove||!fc.start||!fc.getDirectionByPoint||!fc.animateFlippingTo)return;
+    var fold=fc.fold,stopMove=fc.stopMove,byPoint=fc.getDirectionByPoint,want=null,drag=null;
+    fc.getDirectionByPoint=function(p){return want===null?byPoint.call(this,p):want};
+    fc.fold=function(p){
+      var down=pf.mousePosition||p,r=this.getBoundsRect(),W=r.pageWidth;
+      if(!drag||drag.down!==down||this.calc===null){
+        drag=null;
+        /* a page still turning or settling from the last touch finishes first, so this touch starts fresh */
+        if(this.calc!==null&&this.render&&this.render.finishAnimation)this.render.finishAnimation();
+        var port=pf.getOrientation()==='portrait',dx0=p.x-down.x;
+        if(this.calc===null){
+          /* 0 turns forward, 1 turns back */
+          want=port&&Math.abs(dx0)>=3?(dx0<0?0:1):null;
+          try{this.start(down)}finally{want=null}
+          if(this.calc===null)return; /* no page that way, e.g. back from the cover */
+        }
+        var tp=pf.getUI&&pf.getUI().touchPoint;
+        drag={down:down,t0:tp&&tp.time||Date.now(),dir:this.calc.getDirection(),port:port,bottom:this.calc.getCorner()==='bottom',moves:[]};
+      }
+      var dx=p.x-down.x,dy=p.y-down.y;
+      var x=drag.dir===0?r.left+2*W-1:r.left+(drag.port?W:0)+1,y=drag.bottom?r.top+r.height-1:r.top+1;
+      fold.call(this,{x:x+dx,y:y+dy});
+      drag.moves.push({d:drag.dir===0?-dx:dx,t:performance.now()});
+      if(drag.moves.length>30)drag.moves.shift();
+    };
+    fc.stopMove=function(){
+      var c=this.calc;
+      if(c===null||!drag){drag=null;return stopMove.call(this)}
+      var r=this.getBoundsRect(),W=r.pageWidth,m=drag.moves,n=m.length,d=n?m[n-1].d:0,v=0;
+      /* speed over the last tenth of a second, in page widths a second (none if the finger had stopped) */
+      if(n>1&&performance.now()-m[n-1].t<100){
+        var k=n-1;while(k>0&&m[n-1].t-m[k-1].t<=100)k--;
+        var dt=m[n-1].t-m[k].t;if(dt>0)v=(m[n-1].d-m[k].d)/dt*1000/W;
+      }
+      /* pulled back: settle. Let go while moving on, a quick swipe, or a fifth of the way: turn */
+      var go=v<-0.5?false:(v>0.5&&d>W*0.03)||(Date.now()-drag.t0<500&&d>W*0.06)||d>=W*0.2;
+      drag=null;
+      this.animateFlippingTo(c.getPosition(),{x:go?-W:W,y:c.getCorner()==='bottom'?r.height:0},go);
+    };
+  }
   function start(){
     var sc=$('scene'),VW=sc.clientWidth,vh=sc.clientHeight,g=gutFor(VW,vh),narrow=g.narrow,vw=VW-2*g.G;
     $('bookwrap').style.setProperty('--gut',g.G+'px');document.body.classList.toggle('narrow',g.phone);
@@ -1262,6 +1309,7 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
       disableFlipByClick:true,clickEventForward:true,useMouseEvents:true,swipeDistance:20,mobileScrollSupport:false,showPageCorners:true,startPage:sp
     });
     pf.loadFromHTML(book.querySelectorAll('.page'));
+    easyTurn(pf);
     pf.on('flip',function(){syncBar();inkResizeAll();shiftFor(curPage())});
     pf.on('changeOrientation',function(){setTimeout(updateEm,60)});
     syncBar();
