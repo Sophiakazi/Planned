@@ -1,5 +1,5 @@
 /* Petal Planner offline cache. Version changes whenever the app files change. */
-const CACHE = 'petal-544e5cdef4';
+const CACHE = 'petal-243c8fff76';
 const ASSETS = [
   "./",
   "index.html",

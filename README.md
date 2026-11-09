@@ -4,11 +4,14 @@ A page-turning yearly planner for iPad and Apple Pencil. It runs in Safari and c
 
 **Open it:** https://sophiakazi.github.io/Planned/
 
-## Add it to an iPad
+## Add it to an iPad or iPhone
 
-1. Open the link above in Safari.
-2. Tap **Share**, then **Add to Home Screen**.
-3. Open Petal Planner from its home-screen icon.
+1. Open the link above in Safari. The address needs the capital P.
+2. Tap **Share**. On a newer iPhone it can be inside the **•••** menu beside the address bar.
+3. Tap **Add to Home Screen**. If you see **Open as Web App**, leave it on. Then tap **Add**.
+4. Open Petal from its home-screen icon.
+
+On an iPad, Apple Pencil writes and your finger turns pages. On an iPhone, pick the pen and write with your finger; pick the hand to turn pages.
 
 ## Your data
 

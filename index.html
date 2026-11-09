@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <link rel="stylesheet" href="fonts/fonts.css">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -525,13 +525,17 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
   function getDb(){if(!dbp)dbp=openDb().catch(function(e){dbp=null;throw e});return dbp}
   function idbGet(k){return getDb().then(function(db){return new Promise(function(res,rej){var q=db.transaction(DBS,'readonly').objectStore(DBS).get(k);q.onsuccess=function(){res(q.result)};q.onerror=function(){rej(q.error)}})})}
   function idbPut(k,v){return getDb().then(function(db){return new Promise(function(res,rej){var tx=db.transaction(DBS,'readwrite');tx.objectStore(DBS).put(v,k);tx.oncomplete=function(){res()};tx.onerror=tx.onabort=function(){rej(tx.error)}})})}
+  /* in the App Store app, the iPhone/iPad side also keeps a copy of the planner and handles sharing and Calendar */
+  var NATIVE=null;try{NATIVE=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.petal||null}catch(e){}
+  function nat(msg){try{return Promise.resolve(NATIVE.postMessage(msg))}catch(e){return Promise.reject(e)}}
   async function readSaved(){
-    var a=null,b=null;
+    var a=null,b=null,c=null;
     try{a=await idbGet(STORE)}catch(e){}
     try{b=localStorage.getItem(STORE)}catch(e){}
+    if(NATIVE){try{c=await nat({t:'load'})}catch(e){}}
     function ts(x){try{return JSON.parse(x).savedAt||0}catch(e){return -1}}
-    if(a&&b)return ts(a)>=ts(b)?a:b;
-    return a||b;
+    var best=null;[a,b,c].forEach(function(x){if(x&&(best===null||ts(x)>ts(best)))best=x});
+    return best;
   }
   var state={name:'',word:'',year:now.getFullYear(),goals:[],wish:[],months:{},days:{},reflect:'',notes:''};
   var fresh=true;
@@ -563,7 +567,10 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
     state.savedAt=Date.now();
     var json;try{json=JSON.stringify(state)}catch(e){return Promise.resolve()}
     var okLS=true;try{localStorage.setItem(STORE,json)}catch(e){okLS=false}
-    return idbPut(STORE,json).then(function(){saveWarn(false)},function(){if(!okLS)saveWarn(true)});
+    var okApp=NATIVE?nat({t:'save',json:json}).then(function(){return true},function(){return false}):Promise.resolve(false);
+    return Promise.all([idbPut(STORE,json).then(function(){return true},function(){return false}),okApp]).then(function(r){
+      if(r[0]||r[1])saveWarn(false);else if(!okLS)saveWarn(true);
+    });
   }
   function saveWarn(on){
     var t=document.getElementById('savewarn');
@@ -803,7 +810,7 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
       var json=JSON.stringify(state),name='petal-planner-backup-'+todayIso+'.json',file=null;
       try{file=new File([json],name,{type:'application/json'})}catch(e){}
       var touch=window.matchMedia&&matchMedia('(pointer:coarse)').matches;
-      if(!dlCap&&touch&&file&&navigator.canShare&&navigator.canShare({files:[file]})){
+      if(!NATIVE&&!dlCap&&touch&&file&&navigator.canShare&&navigator.canShare({files:[file]})){
         navigator.share({files:[file],title:'Petal Planner backup'}).then(function(){setMsg('Backup ready. Save it to Files to keep it safe.')}).catch(function(e){if(!e||e.name!=='AbortError')saveText(name,json)});
       }else saveText(name,json);
     };
@@ -1272,16 +1279,28 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
       updateEm();
     },200);
   });
+  /* the notch and home-bar sizes can arrive just after the book is measured (the App Store app does this), so re-fit the book when its space changes */
+  if(window.ResizeObserver){
+    var scSize='';
+    new ResizeObserver(function(){
+      var s=$('scene'),k=s.clientWidth+'x'+s.clientHeight;
+      if(scSize&&k!==scSize)window.dispatchEvent(new Event('resize'));
+      scSize=k;
+    }).observe($('scene'));
+  }
 
   /* the page-flip library cancels mousedown on everything except links and buttons, which would block typing and drawing */
   var lastPtr='mouse';
+  /* phones can't use Apple Pencil, so there a finger always writes while the pen, highlighter or eraser is picked */
+  function isPhone(){try{return Math.min(screen.width,screen.height)<600&&matchMedia('(pointer:coarse)').matches}catch(x){return false}}
+  function fingerInk(){return isPhone()||!!state.prefs.finger}
   function guard(e){
     var t=e.target,tag=t&&t.tagName;
     if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'){e.stopPropagation();return}
     if(e.type==='touchstart'&&lastPtr==='pen'){e.stopPropagation();return}
     if(!drawOn)return;
     if(e.type==='mousedown'){e.stopPropagation();return}
-    if(state.prefs.finger)e.stopPropagation();
+    if(fingerInk())e.stopPropagation();
   }
   var sceneEl=$('scene');
   sceneEl.addEventListener('pointerdown',function(e){lastPtr=e.pointerType},true);
@@ -1332,7 +1351,7 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
     if(isPen)lastPen=Date.now();
     if(!drawOn&&!isPen)return;
     if(ev.target.closest&&ev.target.closest('.tabs'))return;
-    if(ev.pointerType==='touch'&&(!state.prefs.finger||Date.now()-lastPen<2500))return;
+    if(ev.pointerType==='touch'&&(!fingerInk()||Date.now()-lastPen<2500))return;
     if(ev.button>0)return;
     var page=ev.target.closest&&ev.target.closest('.page');if(!page||page._pi==null)return;
     var cv=inkEls[page._pi];if(!cv)return;
@@ -1489,6 +1508,10 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
   var msgEl=null;
   function setMsg(t){if(msgEl)msgEl.textContent=t}
   function saveText(filename,text,realName){
+    if(NATIVE){
+      nat({t:'share',name:realName||filename,text:text}).then(function(done){setMsg(done?'Saved.':'')},function(){setMsg('Sharing is not available here.')});
+      return;
+    }
     if(dlCap){
       dlCap.save({filename:filename,data:text}).then(function(){setMsg('Saved.')}).catch(function(err){
         setMsg(err&&err.code==='declined'?'Save cancelled.':'Saving is not available here.');
@@ -1521,7 +1544,16 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
         b.onclick=function(){fn(o[1],'petal-'+y+o[2])};r.appendChild(b);
       });sheet.appendChild(r);
     }
-    row(dlCap?'Apple Calendar (.ics.txt, rename to .ics)':'Apple Calendar (.ics)',function(items,name){saveText(name+'.ics.txt',icsText(items),name+'.ics')});
+    if(NATIVE)row('Add to Apple Calendar',function(items){
+      setMsg('Adding…');
+      nat({t:'calendar',items:items}).then(function(r){
+        var n=r&&r.added||0,s=r&&r.skipped||0;
+        setMsg(n?'Added '+n+(n===1?' to-do':' to-dos')+' to your calendar.'+(s?' '+s+' were already there.':''):s?'Those to-dos are already in your calendar.':'Nothing to add.');
+      },function(e){
+        setMsg(String(e&&e.message||e).indexOf('denied')>=0?'Petal Planner isn’t allowed to add to your calendar. Turn on Calendars for Petal Planner in Settings.':'Couldn’t add to your calendar.');
+      });
+    });
+    else row(dlCap?'Apple Calendar (.ics.txt, rename to .ics)':'Apple Calendar (.ics)',function(items,name){saveText(name+'.ics.txt',icsText(items),name+'.ics')});
     row('Google or Outlook import (.csv)',function(items,name){saveText(name+'.csv',csvText(items))});
     sheet.appendChild(el('span','lbl','Open your calendar'));
     var lr=el('div','cal-row');
@@ -1544,7 +1576,14 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
     var lab=el('label','opt'),cb=el('input');cb.type='checkbox';cb.id='sc-toggle';cb.checked=!!state.prefs.shortcuts;
     cb.onchange=function(){state.prefs.shortcuts=cb.checked;save()};
     lab.append(cb,el('span',null,'Keyboard shortcuts on'));sheet.appendChild(lab);
-    sheet.appendChild(el('p','note','Apple Pencil always writes, anywhere on a page. Your finger taps days and turns pages by their corner. With the pen, highlighter or eraser selected, a mouse draws too. Apple Scribble works in text boxes.'));
+    if(isPhone()){
+      sheet.appendChild(el('p','note','To write, pick the pen, highlighter or eraser and use your finger. Pick the hand to turn pages and tap days.'));
+    }else{
+      var fl=el('label','opt'),fb=el('input');fb.type='checkbox';fb.id='finger-toggle';fb.checked=!!state.prefs.finger;
+      fb.onchange=function(){state.prefs.finger=fb.checked;save()};
+      fl.append(fb,el('span',null,'Write with my finger too'));sheet.appendChild(fl);
+      sheet.appendChild(el('p','note','Apple Pencil always writes, anywhere on a page. Your finger taps days and turns pages by their corner, unless finger writing is on and the pen, highlighter or eraser is picked. With one of those picked, a mouse draws too. Apple Scribble works in text boxes.'));
+    }
     var done=el('button','done-btn','Done');done.type='button';done.onclick=closeSheet;sheet.appendChild(done);
     showDialog();
   }
@@ -1552,7 +1591,7 @@ body{padding-bottom:max(10px,env(safe-area-inset-bottom,0px))}
   $('coverbtn').onclick=openCover;$('coverbtn').title='Cover and settings';applyCover();
   (function(){
     var dark=false;try{dark=localStorage.getItem('pp-theme')==='dark'}catch(x){}
-    function ap(){document.documentElement.setAttribute('data-theme',dark?'dark':'light');$('themebtn').innerHTML=dark?'&#9788;':'&#9790;';$('themebtn').setAttribute('aria-pressed',dark)}
+    function ap(){document.documentElement.setAttribute('data-theme',dark?'dark':'light');$('themebtn').innerHTML=dark?'&#9788;':'&#9790;';$('themebtn').setAttribute('aria-pressed',dark);if(NATIVE)nat({t:'theme',dark:dark}).catch(function(){})}
     $('themebtn').onclick=function(){dark=!dark;try{localStorage.setItem('pp-theme',dark?'dark':'light')}catch(x){}ap()};
     ap();
   })();
