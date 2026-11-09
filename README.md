@@ -2,7 +2,7 @@
 
 A page-turning yearly planner for iPad and Apple Pencil. It runs in Safari and can be added to the home screen, where it opens full-screen and works offline.
 
-**Open it:** https://sophiakazi.github.io/petal-planner/
+**Open it:** https://sophiakazi.github.io/Planned/
 
 ## Add it to an iPad
 
